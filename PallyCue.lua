@@ -69,6 +69,7 @@ local defaults = {
 	centerText = true,
 	combatOnly = true,
 	hideHealthy = true,
+	tankAggro = false,
 	locked = false,
 	point = "CENTER",
 	relPoint = "CENTER",
@@ -639,6 +640,111 @@ local function InFight()
 	return false
 end
 
+local function PlayerIsTanking()
+	if IsTank("player") then
+		return true
+	end
+	if rfName and FindAura("player", { [rfName] = true }) then
+		return true
+	end
+	return false
+end
+
+local function AggroAlert(entry)
+	if GetTime() - zoneAt < ZONE_SUPPRESS then
+		return
+	end
+	local key = "aggro:" .. (entry.name or entry.unit)
+	local now = GetTime()
+	if lastAlert[key] and now - lastAlert[key] < ALERT_COOLDOWN then
+		return
+	end
+	lastAlert[key] = now
+
+	if PallyCueFrame and PallyCueFrame:IsShown() then
+		UIFrameFlash(PallyCueRebuff, 0.15, 0.15, 0.9, false, 0, 0)
+	end
+	if DB.sound then
+		PlaySound(SOUNDKIT and SOUNDKIT.RAID_WARNING or 8959)
+	end
+	if DB.centerText then
+		local text = string.format("%s%s|r has aggro", ClassColor(entry.class), entry.name)
+		if RaidNotice_AddMessage and RaidWarningFrame then
+			RaidNotice_AddMessage(RaidWarningFrame, text, ChatTypeInfo["RAID_WARNING"])
+		else
+			UIErrorsFrame:AddMessage(text, 1, 0.2, 0.2)
+		end
+	end
+end
+
+local function ConsiderHostile(unit, hostiles)
+	if not unit or not UnitExists(unit) then
+		return
+	end
+	if UnitIsDead(unit) or not UnitCanAttack("player", unit) then
+		return
+	end
+	hostiles[UnitGUID(unit) or unit] = unit
+end
+
+function addon.ScanHostileAggro()
+	if not DB.tankAggro then
+		return
+	end
+	local grouped = IsInGroup and IsInGroup() or (GetNumGroupMembers() > 0)
+	if not grouped or not InFight() or not PlayerIsTanking() then
+		return
+	end
+
+	local members = {}
+	for _, entry in ipairs(roster) do
+		if not entry.pet and entry.unit ~= "player" and not IsTank(entry.unit) then
+			members[#members + 1] = entry
+		end
+	end
+	if #members == 0 then
+		return
+	end
+
+	local hostiles = {}
+	ConsiderHostile("target", hostiles)
+	ConsiderHostile("focus", hostiles)
+	ConsiderHostile("mouseover", hostiles)
+	for _, entry in ipairs(roster) do
+		ConsiderHostile(entry.unit .. "target", hostiles)
+	end
+	for i = 1, 40 do
+		ConsiderHostile("nameplate" .. i, hostiles)
+	end
+
+	local seen = {}
+	for _, mob in pairs(hostiles) do
+		local tt = mob .. "target"
+		if UnitExists(tt) then
+			for _, entry in ipairs(members) do
+				if not seen[entry.unit] and UnitIsUnit(tt, entry.unit) then
+					seen[entry.unit] = entry
+				end
+			end
+		end
+	end
+
+	if UnitThreatSituation then
+		for _, entry in ipairs(members) do
+			if not seen[entry.unit] then
+				local s = UnitThreatSituation(entry.unit)
+				if s and s >= 2 then
+					seen[entry.unit] = entry
+				end
+			end
+		end
+	end
+
+	for _, entry in pairs(seen) do
+		AggroAlert(entry)
+	end
+end
+
 local function Alert(problem)
 	if GetTime() - zoneAt < ZONE_SUPPRESS then
 		return
@@ -869,6 +975,7 @@ function addon.Scan()
 	addon.BuildRoster()
 	local problems = addon.CollectProblems()
 	addon.UpdateHUD(problems)
+	addon.ScanHostileAggro()
 end
 
 function addon.QueueScan()
@@ -961,6 +1068,7 @@ local TOGGLE_ICONS = {
 	sound = "Interface\\Icons\\Spell_Holy_Silence",
 	centerText = "Interface\\Icons\\INV_Misc_Note_01",
 	combatOnly = "Interface\\Icons\\Ability_Warrior_OffensiveStance",
+	tankAggro = "Interface\\Icons\\Ability_Warrior_DefensiveStance",
 	locked = "Interface\\Icons\\INV_Misc_Key_03",
 	reset = "Interface\\Icons\\INV_Misc_Map_01",
 	close = "Interface\\Icons\\Spell_Holy_HolyBolt",
@@ -1224,6 +1332,7 @@ function addon.BuildSetup()
 	MakeRow(f, 7, "toggle", "sound", "Sound", 2)
 	MakeRow(f, 8, "toggle", "watchPets", "Watch pets", 1)
 	MakeRow(f, 9, "toggle", "centerText", "Center text", 2)
+	MakeRow(f, 13, "toggle", "tankAggro", "Tank aggro", 0)
 
 	MakeHeader(f, "HUD")
 	MakeRow(f, 10, "toggle", "combatOnly", "Only in combat", 1)
@@ -1307,6 +1416,8 @@ function addon:ADDON_LOADED(name)
 	events:RegisterEvent("SPELLS_CHANGED")
 	events:RegisterEvent("UPDATE_BINDINGS")
 	pcall(events.RegisterEvent, events, "PLAYER_ROLES_ASSIGNED")
+	events:RegisterEvent("UNIT_TARGET")
+	pcall(events.RegisterEvent, events, "UNIT_THREAT_SITUATION_UPDATE")
 end
 
 function addon:PLAYER_LOGIN()
@@ -1316,7 +1427,7 @@ function addon:PLAYER_LOGIN()
 	if enabled then
 		addon.QueueScan()
 		C_Timer.NewTicker(1, function()
-			if enabled and PallyCueFrame:IsShown() then
+			if enabled and (PallyCueFrame:IsShown() or DB.tankAggro) then
 				addon.Scan()
 			end
 		end)
@@ -1367,6 +1478,18 @@ end
 
 function addon:PLAYER_ROLES_ASSIGNED()
 	addon.QueueScan()
+end
+
+function addon:UNIT_TARGET()
+	if DB and DB.tankAggro then
+		addon.QueueScan()
+	end
+end
+
+function addon:UNIT_THREAT_SITUATION_UPDATE()
+	if DB and DB.tankAggro then
+		addon.QueueScan()
+	end
 end
 
 SLASH_PALLYCUE1 = "/pallycue"
