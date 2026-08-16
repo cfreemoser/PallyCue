@@ -8,6 +8,5 @@
 ## SavedVariables: PallyCueDB
 ## X-Category: Paladin
 
-Bindings.xml
 PallyCue.xml
 PallyCue.lua

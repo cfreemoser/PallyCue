@@ -1,4 +1,5 @@
 <Bindings>
-	<Binding name="PALLYCUE_REBUFF" header="PALLYCUE" category="PallyCue">
+	<Binding name="PALLYCUE_REBUFF" header="PALLYCUE">
+		if PallyCueRebuff then PallyCueRebuff:Click("LeftButton") end
 	</Binding>
 </Bindings>
