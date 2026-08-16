@@ -6,7 +6,9 @@
 ## DefaultState: enabled
 ## OptionalDeps: LibClassicDurations, PallyPower
 ## SavedVariables: PallyCueDB
+## IconTexture: Interface\AddOns\PallyCue\icon
 ## X-Category: Paladin
+## X-License: MIT
 
 PallyCue.xml
 PallyCue.lua
