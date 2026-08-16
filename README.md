@@ -16,7 +16,7 @@ Not a PallyPower replacement for raid assignment leads.
 ## Use
 
 - Red / yellow cluster = something needs a buff. Press Rebuff (or tap the icon).
-- Green pip = all clear. Click the pip or type `/pc` for setup.
+- Type `/pc` for setup. When **Hide if healthy** is on, the HUD disappears completely while buffs are up.
 - `/pallycue` or `/pc` opens setup. `/pc reset` recenters the frame.
 
 ## Defaults
@@ -25,6 +25,7 @@ Not a PallyPower replacement for raid assignment leads.
 - Casters → Blessing of Wisdom
 - Tanks → Blessing of Kings
 - Watches your own Righteous Fury, last-seen Aura, and last-seen Seal
+- Self-buff warning at 5s remaining (cycle 0 / 5 / 10 / 15 / 20 / 30 in setup; 0 = missing only)
 - Optional tank aggro alert (off by default): if you are tanking, warns when a non-tank group member is targeted by an enemy
 
 Vanilla / TBC / Wrath Classic. Paladin only. If PallyPower is enabled, PallyCue hides so the two AutoBuff buttons do not fight.
