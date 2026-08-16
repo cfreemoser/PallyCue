@@ -32,7 +32,7 @@ local ZONE_SUPPRESS = 5
 
 local GREATER_WARN = (isVanilla and 180) or 300
 local NORMAL_WARN = (isVanilla and 60) or 120
-local SELF_WARN = 30
+local SELF_WARN_STEPS = { 0, 5, 10, 15, 20, 30 }
 
 local MELEE = {
 	WARRIOR = true,
@@ -63,6 +63,7 @@ local defaults = {
 	caster = 1,
 	tank = 3,
 	watchRF = true,
+	selfWarn = 5,
 	watchPets = false,
 	watchOutsiders = true,
 	showHud = false,
@@ -127,6 +128,14 @@ local function HasSymbols()
 	return (GetItemCount(SYMBOLS) or 0) > 0
 end
 
+local function SelfWarn()
+	local n = DB and DB.selfWarn
+	if type(n) ~= "number" or n < 0 then
+		return 5
+	end
+	return n
+end
+
 local function PallyPowerActive()
 	return _G.PallyPower and _G.PallyPower.opt and _G.PallyPower.opt.enable
 end
@@ -139,6 +148,24 @@ local function InRange(spell, unit)
 	return r == 1 or r == true
 end
 
+local function HasRighteousFury(unit)
+	if not rfName or not unit then
+		return false
+	end
+	local i = 1
+	while true do
+		local name = UnitAura(unit, i, "HELPFUL")
+		if not name then
+			break
+		end
+		if name == rfName then
+			return true
+		end
+		i = i + 1
+	end
+	return false
+end
+
 local function IsTank(unit)
 	if UnitGroupRolesAssigned then
 		local role = UnitGroupRolesAssigned(unit)
@@ -146,7 +173,11 @@ local function IsTank(unit)
 			return true
 		end
 	end
-	return GetPartyAssignment and GetPartyAssignment("MAINTANK", unit)
+	if GetPartyAssignment and GetPartyAssignment("MAINTANK", unit) then
+		return true
+	end
+	-- Paladin tanks often have no formal role; Righteous Fury is the signal.
+	return HasRighteousFury(unit)
 end
 
 local function FormatTime(remain)
@@ -592,7 +623,7 @@ function addon.CollectProblems()
 				state = "missing",
 				count = 1,
 			}
-		elseif remain and remain < SELF_WARN then
+		elseif remain and remain < SelfWarn() then
 			problems[#problems + 1] = {
 				priority = 1,
 				kind = "rf",
@@ -611,7 +642,7 @@ function addon.CollectProblems()
 	if auraName and auraState == "ok" then
 		lastAura = auraName
 	end
-	if auraState == "missing" or (auraRemain and auraRemain < SELF_WARN) then
+	if auraState == "missing" or (auraRemain and auraRemain < SelfWarn()) then
 		local spell = lastAura or auraNames[1]
 		if spell then
 			problems[#problems + 1] = {
@@ -632,7 +663,7 @@ function addon.CollectProblems()
 	if sealName and sealState == "ok" then
 		lastSeal = sealName
 	end
-	if sealState == "missing" or (sealRemain and sealRemain < SELF_WARN) then
+	if sealState == "missing" or (sealRemain and sealRemain < SelfWarn()) then
 		local spell = lastSeal or sealNames[4] or sealNames[1]
 		if spell then
 			problems[#problems + 1] = {
@@ -743,16 +774,6 @@ local function InFight()
 	return false
 end
 
-local function PlayerIsTanking()
-	if IsTank("player") then
-		return true
-	end
-	if rfName and FindAura("player", { [rfName] = true }) then
-		return true
-	end
-	return false
-end
-
 local function AggroAlert(entry)
 	if GetTime() - zoneAt < ZONE_SUPPRESS then
 		return
@@ -795,7 +816,7 @@ function addon.ScanHostileAggro()
 		return
 	end
 	local grouped = IsInGroup and IsInGroup() or (GetNumGroupMembers() > 0)
-	if not grouped or not InFight() or not PlayerIsTanking() then
+	if not grouped or not InFight() or not IsTank("player") then
 		return
 	end
 
@@ -1116,13 +1137,10 @@ function addon.UpdateHUD(problems)
 
 	if healthy then
 		PlaceClicker(false)
-		PallyCueFrame:Hide()
+		PallyCuePip:Hide()
 		if DB.hideHealthy then
-			PallyCuePip:Show()
-			PallyCuePip:ClearAllPoints()
-			PallyCuePip:SetPoint(DB.point, UIParent, DB.relPoint, DB.x, DB.y)
+			PallyCueFrame:Hide()
 		else
-			PallyCuePip:Hide()
 			PallyCueFrame:Show()
 			PlaceClicker(true)
 			PallyCueRebuffIcon:SetTexture("Interface\\Icons\\Spell_Holy_HolyGuidance")
@@ -1256,6 +1274,7 @@ local ROW_HOVER = { 0.95, 0.78, 0.28, 0.16 }
 
 local TOGGLE_ICONS = {
 	watchRF = "Interface\\Icons\\Spell_Holy_SealOfFury",
+	selfWarn = "Interface\\Icons\\INV_Misc_PocketWatch_01",
 	showSolo = "Interface\\Icons\\Spell_Holy_DevotionAura",
 	watchPets = "Interface\\Icons\\Ability_Hunter_BeastTaming",
 	watchOutsiders = "Interface\\Icons\\Spell_Holy_FistOfJustice",
@@ -1303,6 +1322,24 @@ local function CycleBlessing(key)
 	addon.QueueScan()
 end
 
+local function CycleSelfWarn()
+	local cur = SelfWarn()
+	local idx = 0
+	for i, v in ipairs(SELF_WARN_STEPS) do
+		if v == cur then
+			idx = i
+			break
+		end
+	end
+	idx = idx + 1
+	if idx > #SELF_WARN_STEPS then
+		idx = 1
+	end
+	DB.selfWarn = SELF_WARN_STEPS[idx]
+	addon.RefreshSetup()
+	addon.QueueScan()
+end
+
 local function Paint(tex, color)
 	tex:SetColorTexture(unpack(color))
 end
@@ -1321,9 +1358,19 @@ local function MakeHeader(parent, text)
 	setupCursorY = setupCursorY - 4
 end
 
+local function PaintFocus(btn, on)
+	if not btn then
+		return
+	end
+	Paint(btn.bg, on and ROW_HOVER or ROW_IDLE)
+	btn.accent:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], on and 0.95 or 0.0)
+end
+
 -- col: 0 full width, 1 left, 2 right (same row as previous left)
-local function MakeRow(parent, index, kind, key, title, col)
+-- role: "tail" is the right-hand landing pad for a full-width control
+local function MakeRow(parent, index, kind, key, title, col, role)
 	col = col or 0
+	role = role or "full"
 	local width, x
 	if col == 0 then
 		width, x = PANEL_W - 32, 16
@@ -1363,21 +1410,23 @@ local function MakeRow(parent, index, kind, key, title, col)
 	btn.value:SetPoint("RIGHT", -10, 0)
 	btn.value:SetJustifyH("RIGHT")
 
-	btn.kind, btn.key, btn.title = kind, key, title
+	btn.kind, btn.key, btn.title, btn.role = kind, key, title, role
 	btn.OnCancelClick = function()
 		parent:Hide()
 	end
 	btn:SetScript("OnEnter", function(self)
-		Paint(self.bg, ROW_HOVER)
-		self.accent:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.95)
+		PaintFocus(self, true)
+		PaintFocus(self.pair, true)
 	end)
 	btn:SetScript("OnLeave", function(self)
-		Paint(self.bg, ROW_IDLE)
-		self.accent:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.0)
+		PaintFocus(self, false)
+		PaintFocus(self.pair, false)
 	end)
 	btn:SetScript("OnClick", function()
 		if kind == "cycle" then
 			CycleBlessing(key)
+		elseif kind == "warn" then
+			CycleSelfWarn()
 		elseif kind == "toggle" then
 			DB[key] = not DB[key]
 			if key == "locked" or key == "hideHealthy" then
@@ -1393,12 +1442,30 @@ local function MakeRow(parent, index, kind, key, title, col)
 		end
 	end)
 
+	if role == "tail" then
+		btn.icon:Hide()
+		btn.label:SetText("")
+		btn.label:SetPoint("LEFT", 8, 0)
+	end
+
 	if col ~= 1 then
 		setupCursorY = setupCursorY - ROW_H - ROW_GAP
 	end
-	setupControls[key or ("row" .. index)] = btn
+	if role ~= "tail" then
+		setupControls[key or ("row" .. index)] = btn
+	end
 	setupButtons[#setupButtons + 1] = btn
 	return btn
+end
+
+-- Full-width control split into two column-aligned nodes so ConsolePort
+-- D-pad down from either options column can land on it (center-based nav
+-- treats a single wide row as sideways from a half-width button).
+local function MakeSpanRow(parent, leadIndex, tailIndex, kind, key, title)
+	local lead = MakeRow(parent, leadIndex, kind, key, title, 1, "lead")
+	local tail = MakeRow(parent, tailIndex, kind, key, title, 2, "tail")
+	lead.pair, tail.pair = tail, lead
+	return lead, tail
 end
 
 function addon.SetupConsolePort()
@@ -1522,20 +1589,21 @@ function addon.BuildSetup()
 	MakeRow(f, 3, "cycle", "tank", "Tank", 0)
 
 	MakeHeader(f, "OPTIONS")
+	MakeSpanRow(f, 14, 16, "warn", "selfWarn", "Self warn")
 	MakeRow(f, 4, "toggle", "watchRF", "Righteous Fury", 1)
 	MakeRow(f, 5, "toggle", "hideHealthy", "Hide if healthy", 2)
 	MakeRow(f, 6, "toggle", "showSolo", "Show solo", 1)
 	MakeRow(f, 7, "toggle", "sound", "Sound", 2)
 	MakeRow(f, 8, "toggle", "watchPets", "Watch pets", 1)
 	MakeRow(f, 9, "toggle", "centerText", "Center text", 2)
-	MakeRow(f, 14, "toggle", "watchOutsiders", "Watch target", 1)
-	MakeRow(f, 13, "toggle", "tankAggro", "Tank aggro", 2)
+	MakeSpanRow(f, 18, 19, "toggle", "watchOutsiders", "Watch target")
+	MakeSpanRow(f, 13, 17, "toggle", "tankAggro", "Tank aggro")
 
 	MakeHeader(f, "HUD")
-	MakeRow(f, 15, "toggle", "showHud", "Show HUD", 1)
-	MakeRow(f, 10, "toggle", "combatOnly", "Only in combat", 2)
-	MakeRow(f, 11, "toggle", "locked", "Lock frame", 0)
-	MakeRow(f, 12, "reset", "reset", "Reset HUD", 0)
+	MakeSpanRow(f, 20, 21, "toggle", "showHud", "Show HUD")
+	MakeRow(f, 10, "toggle", "combatOnly", "Only in combat", 1)
+	MakeRow(f, 11, "toggle", "locked", "Lock frame", 2)
+	MakeSpanRow(f, 12, 15, "reset", "reset", "Reset HUD")
 
 	setupCursorY = setupCursorY - 6
 	local hint = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
@@ -1552,25 +1620,35 @@ function addon.RefreshSetup()
 		return
 	end
 	for _, btn in ipairs(setupButtons) do
+		local tail = btn.role == "tail"
+		local lead = btn.role == "lead"
 		if btn.kind == "cycle" then
-			btn.label:SetText(btn.title)
-			btn.value:SetText(blessingNames[DB[btn.key]] or "?")
+			btn.label:SetText(tail and "" or btn.title)
+			btn.value:SetText((tail or not lead) and (blessingNames[DB[btn.key]] or "?") or "")
 			btn.value:SetTextColor(unpack(GOLD))
 			btn.icon:SetTexture(blessingIcons[DB[btn.key]] or "Interface\\Icons\\INV_Misc_QuestionMark")
+		elseif btn.kind == "warn" then
+			btn.label:SetText(tail and "" or btn.title)
+			btn.value:SetText((tail or not lead) and (SelfWarn() .. "s") or "")
+			btn.value:SetTextColor(unpack(GOLD))
+			btn.icon:SetTexture(TOGGLE_ICONS.selfWarn)
 		elseif btn.kind == "toggle" then
 			local on = DB[btn.key]
-			btn.label:SetText(btn.title)
-			btn.value:SetText(on and "ON" or "OFF")
+			btn.label:SetText(tail and "" or btn.title)
+			btn.value:SetText((tail or not lead) and (on and "ON" or "OFF") or "")
 			btn.value:SetTextColor(unpack(on and ONCOL or OFFCOL))
 			btn.icon:SetTexture(TOGGLE_ICONS[btn.key] or "Interface\\Icons\\INV_Misc_QuestionMark")
 		elseif btn.kind == "reset" then
-			btn.label:SetText("Reset HUD")
+			btn.label:SetText(tail and "" or "Reset HUD")
 			btn.value:SetText("")
 			btn.icon:SetTexture(TOGGLE_ICONS.reset)
 		elseif btn.kind == "close" then
 			btn.label:SetText("Close")
 			btn.value:SetText("")
 			btn.icon:SetTexture(TOGGLE_ICONS.close)
+		end
+		if tail then
+			btn.icon:Hide()
 		end
 	end
 end
