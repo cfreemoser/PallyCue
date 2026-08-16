@@ -32,7 +32,7 @@ local ZONE_SUPPRESS = 5
 
 local GREATER_WARN = (isVanilla and 180) or 300
 local NORMAL_WARN = (isVanilla and 60) or 120
-local SELF_WARN = 30
+local SELF_WARN_STEPS = { 0, 5, 10, 15, 20, 30 }
 
 local MELEE = {
 	WARRIOR = true,
@@ -63,6 +63,7 @@ local defaults = {
 	caster = 1,
 	tank = 3,
 	watchRF = true,
+	selfWarn = 5,
 	watchPets = false,
 	showSolo = true,
 	sound = true,
@@ -125,6 +126,14 @@ local function HasSymbols()
 	return (GetItemCount(SYMBOLS) or 0) > 0
 end
 
+local function SelfWarn()
+	local n = DB and DB.selfWarn
+	if type(n) ~= "number" or n < 0 then
+		return 5
+	end
+	return n
+end
+
 local function PallyPowerActive()
 	return _G.PallyPower and _G.PallyPower.opt and _G.PallyPower.opt.enable
 end
@@ -137,6 +146,24 @@ local function InRange(spell, unit)
 	return r == 1 or r == true
 end
 
+local function HasRighteousFury(unit)
+	if not rfName or not unit then
+		return false
+	end
+	local i = 1
+	while true do
+		local name = UnitAura(unit, i, "HELPFUL")
+		if not name then
+			break
+		end
+		if name == rfName then
+			return true
+		end
+		i = i + 1
+	end
+	return false
+end
+
 local function IsTank(unit)
 	if UnitGroupRolesAssigned then
 		local role = UnitGroupRolesAssigned(unit)
@@ -144,7 +171,11 @@ local function IsTank(unit)
 			return true
 		end
 	end
-	return GetPartyAssignment and GetPartyAssignment("MAINTANK", unit)
+	if GetPartyAssignment and GetPartyAssignment("MAINTANK", unit) then
+		return true
+	end
+	-- Paladin tanks often have no formal role; Righteous Fury is the signal.
+	return HasRighteousFury(unit)
 end
 
 local function FormatTime(remain)
@@ -491,7 +522,7 @@ function addon.CollectProblems()
 				state = "missing",
 				count = 1,
 			}
-		elseif remain and remain < SELF_WARN then
+		elseif remain and remain < SelfWarn() then
 			problems[#problems + 1] = {
 				priority = 1,
 				kind = "rf",
@@ -510,7 +541,7 @@ function addon.CollectProblems()
 	if auraName and auraState == "ok" then
 		lastAura = auraName
 	end
-	if auraState == "missing" or (auraRemain and auraRemain < SELF_WARN) then
+	if auraState == "missing" or (auraRemain and auraRemain < SelfWarn()) then
 		local spell = lastAura or auraNames[1]
 		if spell then
 			problems[#problems + 1] = {
@@ -531,7 +562,7 @@ function addon.CollectProblems()
 	if sealName and sealState == "ok" then
 		lastSeal = sealName
 	end
-	if sealState == "missing" or (sealRemain and sealRemain < SELF_WARN) then
+	if sealState == "missing" or (sealRemain and sealRemain < SelfWarn()) then
 		local spell = lastSeal or sealNames[4] or sealNames[1]
 		if spell then
 			problems[#problems + 1] = {
@@ -640,16 +671,6 @@ local function InFight()
 	return false
 end
 
-local function PlayerIsTanking()
-	if IsTank("player") then
-		return true
-	end
-	if rfName and FindAura("player", { [rfName] = true }) then
-		return true
-	end
-	return false
-end
-
 local function AggroAlert(entry)
 	if GetTime() - zoneAt < ZONE_SUPPRESS then
 		return
@@ -692,7 +713,7 @@ function addon.ScanHostileAggro()
 		return
 	end
 	local grouped = IsInGroup and IsInGroup() or (GetNumGroupMembers() > 0)
-	if not grouped or not InFight() or not PlayerIsTanking() then
+	if not grouped or not InFight() or not IsTank("player") then
 		return
 	end
 
@@ -924,13 +945,10 @@ function addon.UpdateHUD(problems)
 
 	if healthy then
 		ArmButton(nil)
-		PallyCueFrame:Hide()
+		PallyCuePip:Hide()
 		if DB.hideHealthy then
-			PallyCuePip:Show()
-			PallyCuePip:ClearAllPoints()
-			PallyCuePip:SetPoint(DB.point, UIParent, DB.relPoint, DB.x, DB.y)
+			PallyCueFrame:Hide()
 		else
-			PallyCuePip:Hide()
 			PallyCueFrame:Show()
 			PallyCueRebuffIcon:SetTexture("Interface\\Icons\\Spell_Holy_HolyGuidance")
 			PallyCueRebuffBorder:SetVertexColor(ColorFor("ok"))
@@ -1062,6 +1080,7 @@ local ROW_HOVER = { 0.95, 0.78, 0.28, 0.16 }
 
 local TOGGLE_ICONS = {
 	watchRF = "Interface\\Icons\\Spell_Holy_SealOfFury",
+	selfWarn = "Interface\\Icons\\INV_Misc_PocketWatch_01",
 	showSolo = "Interface\\Icons\\Spell_Holy_DevotionAura",
 	watchPets = "Interface\\Icons\\Ability_Hunter_BeastTaming",
 	hideHealthy = "Interface\\Icons\\Spell_Holy_PowerWordShield",
@@ -1103,6 +1122,24 @@ local function CycleBlessing(key)
 		idx = 1
 	end
 	DB[key] = list[idx].id
+	addon.RefreshSetup()
+	addon.QueueScan()
+end
+
+local function CycleSelfWarn()
+	local cur = SelfWarn()
+	local idx = 0
+	for i, v in ipairs(SELF_WARN_STEPS) do
+		if v == cur then
+			idx = i
+			break
+		end
+	end
+	idx = idx + 1
+	if idx > #SELF_WARN_STEPS then
+		idx = 1
+	end
+	DB.selfWarn = SELF_WARN_STEPS[idx]
 	addon.RefreshSetup()
 	addon.QueueScan()
 end
@@ -1192,6 +1229,8 @@ local function MakeRow(parent, index, kind, key, title, col, role)
 	btn:SetScript("OnClick", function()
 		if kind == "cycle" then
 			CycleBlessing(key)
+		elseif kind == "warn" then
+			CycleSelfWarn()
 		elseif kind == "toggle" then
 			DB[key] = not DB[key]
 			if key == "locked" or key == "hideHealthy" then
@@ -1354,13 +1393,14 @@ function addon.BuildSetup()
 	MakeRow(f, 3, "cycle", "tank", "Tank", 0)
 
 	MakeHeader(f, "OPTIONS")
+	MakeSpanRow(f, 14, 16, "warn", "selfWarn", "Self warn")
 	MakeRow(f, 4, "toggle", "watchRF", "Righteous Fury", 1)
 	MakeRow(f, 5, "toggle", "hideHealthy", "Hide if healthy", 2)
 	MakeRow(f, 6, "toggle", "showSolo", "Show solo", 1)
 	MakeRow(f, 7, "toggle", "sound", "Sound", 2)
 	MakeRow(f, 8, "toggle", "watchPets", "Watch pets", 1)
 	MakeRow(f, 9, "toggle", "centerText", "Center text", 2)
-	MakeSpanRow(f, 13, 14, "toggle", "tankAggro", "Tank aggro")
+	MakeSpanRow(f, 13, 17, "toggle", "tankAggro", "Tank aggro")
 
 	MakeHeader(f, "HUD")
 	MakeRow(f, 10, "toggle", "combatOnly", "Only in combat", 1)
@@ -1389,6 +1429,11 @@ function addon.RefreshSetup()
 			btn.value:SetText((tail or not lead) and (blessingNames[DB[btn.key]] or "?") or "")
 			btn.value:SetTextColor(unpack(GOLD))
 			btn.icon:SetTexture(blessingIcons[DB[btn.key]] or "Interface\\Icons\\INV_Misc_QuestionMark")
+		elseif btn.kind == "warn" then
+			btn.label:SetText(tail and "" or btn.title)
+			btn.value:SetText((tail or not lead) and (SelfWarn() .. "s") or "")
+			btn.value:SetTextColor(unpack(GOLD))
+			btn.icon:SetTexture(TOGGLE_ICONS.selfWarn)
 		elseif btn.kind == "toggle" then
 			local on = DB[btn.key]
 			btn.label:SetText(tail and "" or btn.title)
