@@ -64,6 +64,8 @@ local defaults = {
 	tank = 3,
 	watchRF = true,
 	watchPets = false,
+	watchOutsiders = true,
+	showHud = false,
 	showSolo = true,
 	sound = true,
 	centerText = true,
@@ -384,6 +386,28 @@ local function BestSpell(id, unit, wantGreater)
 	return blessingNames[id], false
 end
 
+local function FirstKnownBlessing(unit)
+	unit = unit or "player"
+	local level = UnitLevel(unit) or 1
+	local ids = {}
+	for id in pairs(blessingNames) do
+		ids[#ids + 1] = id
+	end
+	table.sort(ids)
+	for _, id in ipairs(ids) do
+		if normalRanks[id] then
+			for _, row in ipairs(normalRanks[id]) do
+				if level >= row[1] and Known(row[2]) then
+					return id, SpellName(row[2])
+				end
+			end
+		end
+	end
+	local _, class = UnitClass(unit)
+	local id = BlessingIdFor(class, unit)
+	return id, blessingNames[id]
+end
+
 local function SkipPetNPC(unit)
 	local guid = UnitGUID(unit)
 	if not guid then
@@ -407,11 +431,83 @@ local function SkipPetNPC(unit)
 	return false
 end
 
+local function RosterHasGUID(guid)
+	if not guid then
+		return false
+	end
+	for _, entry in ipairs(roster) do
+		if UnitGUID(entry.unit) == guid then
+			return true
+		end
+	end
+	return false
+end
+
+local function IsSelectUnit(unit)
+	return unit == "target" or unit == "focus" or unit == "mouseover"
+end
+
+local function CanBless(unit)
+	if not unit or not UnitExists(unit) or UnitIsDeadOrGhost(unit) then
+		return false
+	end
+	if UnitCanAttack("player", unit) then
+		return false
+	end
+	if UnitCanAssist then
+		return UnitCanAssist("player", unit) and true or false
+	end
+	return UnitIsFriend("player", unit) and true or false
+end
+
+local function IsFriendlyPlayer(unit)
+	return CanBless(unit) and UnitIsPlayer(unit)
+end
+
+local function SelectedBlessUnit()
+	if DB.watchOutsiders then
+		local candidates = { "mouseover", "target", "focus", "softfriend" }
+		for _, unit in ipairs(candidates) do
+			if CanBless(unit) and not UnitIsUnit(unit, "player") then
+				return unit
+			end
+		end
+	end
+	return "player"
+end
+
+local function TryAddOutsider(unit)
+	if not IsFriendlyPlayer(unit) then
+		return
+	end
+	if UnitIsUnit(unit, "player") then
+		return
+	end
+	if (UnitInParty and UnitInParty(unit)) or (UnitInRaid and UnitInRaid(unit)) then
+		return
+	end
+	local guid = UnitGUID(unit)
+	if RosterHasGUID(guid) then
+		return
+	end
+	local _, class = UnitClass(unit)
+	if not class then
+		return
+	end
+	roster[#roster + 1] = {
+		unit = unit,
+		name = GetUnitName(unit, false) or unit,
+		class = class,
+		pet = false,
+		outsider = true,
+	}
+end
+
 function addon.BuildRoster()
 	wipe(roster)
 	local units = IsInRaid() and raidUnits or partyUnits
 	local grouped = IsInGroup and IsInGroup() or (GetNumGroupMembers() > 0)
-	if not grouped and not DB.showSolo then
+	if not grouped and not DB.showSolo and not DB.watchOutsiders then
 		return
 	end
 	for _, unit in ipairs(units) do
@@ -429,6 +525,11 @@ function addon.BuildRoster()
 				end
 			end
 		end
+	end
+	if DB.watchOutsiders then
+		TryAddOutsider("mouseover")
+		TryAddOutsider("target")
+		TryAddOutsider("focus")
 	end
 end
 
@@ -552,24 +653,26 @@ function addon.CollectProblems()
 	for _, entry in ipairs(roster) do
 		ClassifyBlessing(entry)
 		if entry.state == "missing" or entry.state == "expiring" then
-			local spell, isGreater = BestSpell(entry.blessingId, entry.unit, true)
+			local spell, isGreater = BestSpell(entry.blessingId, entry.unit, not entry.outsider)
 			local nSpell = BestSpell(entry.blessingId, entry.unit, false)
 			local inRange = InRange(spell or nSpell, entry.unit)
 			if not inRange and entry.state ~= "dead" then
 				entry.state = "range"
 			end
 			entry.spell = (inRange and (spell or nSpell)) or nSpell
-			entry.useGreater = isGreater
+			entry.useGreater = isGreater and not entry.outsider
 			entry.icon = blessingIcons[entry.blessingId]
-			local class = entry.class
-			byClass[class] = byClass[class] or { missing = {}, expiring = {}, id = entry.blessingId }
-			if entry.state == "missing" then
-				table.insert(byClass[class].missing, entry)
-			elseif entry.state == "expiring" then
-				table.insert(byClass[class].expiring, entry)
+			if not entry.outsider then
+				local class = entry.class
+				byClass[class] = byClass[class] or { missing = {}, expiring = {}, id = entry.blessingId }
+				if entry.state == "missing" then
+					table.insert(byClass[class].missing, entry)
+				elseif entry.state == "expiring" then
+					table.insert(byClass[class].expiring, entry)
+				end
 			end
 			problems[#problems + 1] = {
-				priority = 10,
+				priority = entry.outsider and 20 or 10,
 				kind = "blessing",
 				unit = entry.unit,
 				spell = entry.spell,
@@ -698,7 +801,7 @@ function addon.ScanHostileAggro()
 
 	local members = {}
 	for _, entry in ipairs(roster) do
-		if not entry.pet and entry.unit ~= "player" and not IsTank(entry.unit) then
+		if not entry.pet and not entry.outsider and entry.unit ~= "player" and not IsTank(entry.unit) then
 			members[#members + 1] = entry
 		end
 	end
@@ -787,31 +890,108 @@ local function ColorFor(state)
 	return unpack(COLORS[state] or COLORS.missing)
 end
 
+local function PlaceClicker(onHud)
+	if InCombatLockdown() then
+		return
+	end
+	local btn = PallyCueRebuff
+	btn:RegisterForClicks("AnyUp", "AnyDown", "LeftButtonDown", "RightButtonDown", "LeftButtonUp", "RightButtonUp")
+	if onHud then
+		btn:SetParent(PallyCueFrame)
+		btn:ClearAllPoints()
+		btn:SetPoint("TOPLEFT")
+		btn:SetSize(72, 72)
+		btn:SetAlpha(1)
+		btn:EnableMouse(true)
+		btn:Show()
+	else
+		-- Must stay shown or /click does nothing in Classic.
+		btn:SetParent(UIParent)
+		btn:ClearAllPoints()
+		btn:SetPoint("CENTER", UIParent, "BOTTOMLEFT", -80, -80)
+		btn:SetSize(8, 8)
+		btn:SetAlpha(0)
+		btn:EnableMouse(false)
+		btn:Show()
+	end
+end
+
 local function ArmButton(problem)
 	local btn = PallyCueRebuff
 	if InCombatLockdown() then
-		if armed.unit and armed.spell then
-			local valid = UnitExists(armed.unit) and not UnitIsDeadOrGhost(armed.unit)
-			if not valid then
-				PallyCueTimer:SetText("Wait — out of combat")
-				local r, g, b = ColorFor("wait")
-				PallyCueRebuffBorder:SetVertexColor(r, g, b)
-			end
-		end
 		return
 	end
 	if problem and problem.spell and problem.unit and problem.state ~= "range" and problem.state ~= "dead" then
+		local unit = problem.unit
+		local spell = problem.spell
+		if problem.kind == "blessing" or problem.kind == "greater" or problem.outsider then
+			unit = SelectedBlessUnit()
+			spell = BestSpell(problem.blessingId or BlessingIdFor(select(2, UnitClass(unit)), unit), unit, false) or spell
+		end
+		-- type=spell (not macro): a bar /click cannot nest into another macro button.
 		btn:SetAttribute("type", "spell")
-		btn:SetAttribute("unit", problem.unit)
-		btn:SetAttribute("spell", problem.spell)
-		armed.unit = problem.unit
-		armed.spell = problem.spell
+		btn:SetAttribute("spell", spell)
+		btn:SetAttribute("unit", unit)
+		btn:SetAttribute("type1", "spell")
+		btn:SetAttribute("spell1", spell)
+		btn:SetAttribute("unit1", unit)
+		btn:SetAttribute("type2", "spell")
+		btn:SetAttribute("spell2", spell)
+		btn:SetAttribute("unit2", unit)
+		btn:SetAttribute("macrotext", nil)
+		btn:SetAttribute("macrotext1", nil)
+		btn:SetAttribute("macrotext2", nil)
+		armed.unit = unit
+		armed.spell = spell
+		armed.macro = "spell:" .. tostring(spell)
 	else
+		btn:SetAttribute("type", nil)
 		btn:SetAttribute("spell", nil)
 		btn:SetAttribute("unit", nil)
+		btn:SetAttribute("type1", nil)
+		btn:SetAttribute("spell1", nil)
+		btn:SetAttribute("unit1", nil)
+		btn:SetAttribute("type2", nil)
+		btn:SetAttribute("spell2", nil)
+		btn:SetAttribute("unit2", nil)
+		btn:SetAttribute("macrotext", nil)
 		armed.unit = nil
 		armed.spell = nil
+		armed.macro = nil
 	end
+end
+
+local function SelectOrSelfBlessing()
+	local unit = SelectedBlessUnit()
+	local _, class = UnitClass(unit)
+	local id = BlessingIdFor(class, unit)
+	local spell = BestSpell(id, unit, false)
+	if id and normalRanks[id] then
+		local known
+		for _, row in ipairs(normalRanks[id]) do
+			if Known(row[2]) then
+				known = true
+				break
+			end
+		end
+		if not known then
+			id, spell = FirstKnownBlessing(unit)
+		end
+	end
+	if not spell then
+		return nil
+	end
+	return {
+		kind = "blessing",
+		unit = unit,
+		spell = spell,
+		blessingId = id,
+		outsider = unit ~= "player",
+		state = "ok",
+		icon = blessingIcons[id],
+		label = string.format("%s%s|r", ClassColor(class), GetUnitName(unit, false) or unit),
+		count = 1,
+	}
 end
 
 local function EnsureRows()
@@ -888,42 +1068,54 @@ end
 
 function addon.UpdateHUD(problems)
 	local hideForPP = PallyPowerActive()
-	local nextAction
+	local hudAction
 	for _, p in ipairs(problems) do
 		if p.kind ~= "blessing" or p.state == "missing" or p.state == "expiring" then
 			if p.kind == "greater" or p.kind == "rf" or p.kind == "aura" or p.kind == "seal" or p.kind == "blessing" then
 				if p.state ~= "dead" then
-					nextAction = p
+					hudAction = p
 					break
 				end
 			end
 		end
 	end
-	if not nextAction then
+	if not hudAction then
 		for _, p in ipairs(problems) do
 			if p.state == "range" or p.state == "dead" then
-				nextAction = p
+				hudAction = p
 				break
 			end
 		end
 	end
 
+	local castAction
+	for _, p in ipairs(problems) do
+		if (p.kind == "blessing" or p.kind == "greater") and (p.state == "missing" or p.state == "expiring") then
+			castAction = p
+			break
+		end
+	end
+	castAction = castAction or SelectOrSelfBlessing()
+	ArmButton(castAction)
+
 	local healthy = #problems == 0
-	if hideForPP or not enabled then
+
+	if not DB.showHud or hideForPP or not enabled then
+		PlaceClicker(false)
 		PallyCueFrame:Hide()
 		PallyCuePip:Hide()
 		return
 	end
 
 	if DB.combatOnly and not InFight() then
-		ArmButton(nextAction)
+		PlaceClicker(false)
 		PallyCueFrame:Hide()
 		PallyCuePip:Hide()
 		return
 	end
 
 	if healthy then
-		ArmButton(nil)
+		PlaceClicker(false)
 		PallyCueFrame:Hide()
 		if DB.hideHealthy then
 			PallyCuePip:Show()
@@ -932,6 +1124,7 @@ function addon.UpdateHUD(problems)
 		else
 			PallyCuePip:Hide()
 			PallyCueFrame:Show()
+			PlaceClicker(true)
 			PallyCueRebuffIcon:SetTexture("Interface\\Icons\\Spell_Holy_HolyGuidance")
 			PallyCueRebuffBorder:SetVertexColor(ColorFor("ok"))
 			PallyCueRebuffCount:SetText("")
@@ -944,7 +1137,8 @@ function addon.UpdateHUD(problems)
 
 	PallyCuePip:Hide()
 	PallyCueFrame:Show()
-	ArmButton(nextAction)
+	PlaceClicker(true)
+	local nextAction = hudAction or castAction
 	if nextAction then
 		PallyCueRebuffIcon:SetTexture(nextAction.icon)
 		PallyCueRebuffBorder:SetVertexColor(ColorFor(nextAction.state))
@@ -1064,6 +1258,8 @@ local TOGGLE_ICONS = {
 	watchRF = "Interface\\Icons\\Spell_Holy_SealOfFury",
 	showSolo = "Interface\\Icons\\Spell_Holy_DevotionAura",
 	watchPets = "Interface\\Icons\\Ability_Hunter_BeastTaming",
+	watchOutsiders = "Interface\\Icons\\Spell_Holy_FistOfJustice",
+	showHud = "Interface\\Icons\\Spell_Holy_HolyGuidance",
 	hideHealthy = "Interface\\Icons\\Spell_Holy_PowerWordShield",
 	sound = "Interface\\Icons\\Spell_Holy_Silence",
 	centerText = "Interface\\Icons\\INV_Misc_Note_01",
@@ -1332,11 +1528,13 @@ function addon.BuildSetup()
 	MakeRow(f, 7, "toggle", "sound", "Sound", 2)
 	MakeRow(f, 8, "toggle", "watchPets", "Watch pets", 1)
 	MakeRow(f, 9, "toggle", "centerText", "Center text", 2)
-	MakeRow(f, 13, "toggle", "tankAggro", "Tank aggro", 0)
+	MakeRow(f, 14, "toggle", "watchOutsiders", "Watch target", 1)
+	MakeRow(f, 13, "toggle", "tankAggro", "Tank aggro", 2)
 
 	MakeHeader(f, "HUD")
-	MakeRow(f, 10, "toggle", "combatOnly", "Only in combat", 1)
-	MakeRow(f, 11, "toggle", "locked", "Lock frame", 2)
+	MakeRow(f, 15, "toggle", "showHud", "Show HUD", 1)
+	MakeRow(f, 10, "toggle", "combatOnly", "Only in combat", 2)
+	MakeRow(f, 11, "toggle", "locked", "Lock frame", 0)
 	MakeRow(f, 12, "reset", "reset", "Reset HUD", 0)
 
 	setupCursorY = setupCursorY - 6
@@ -1417,6 +1615,9 @@ function addon:ADDON_LOADED(name)
 	events:RegisterEvent("UPDATE_BINDINGS")
 	pcall(events.RegisterEvent, events, "PLAYER_ROLES_ASSIGNED")
 	events:RegisterEvent("UNIT_TARGET")
+	events:RegisterEvent("PLAYER_TARGET_CHANGED")
+	events:RegisterEvent("UPDATE_MOUSEOVER_UNIT")
+	pcall(events.RegisterEvent, events, "PLAYER_FOCUS_CHANGED")
 	pcall(events.RegisterEvent, events, "UNIT_THREAT_SITUATION_UPDATE")
 end
 
@@ -1425,9 +1626,17 @@ function addon:PLAYER_LOGIN()
 	addon.ApplyPosition()
 	addon.BindKeys()
 	if enabled then
+		PallyCueRebuff:SetScript("PreClick", function()
+			if InCombatLockdown() then
+				return
+			end
+			if not armed.spell or armed.unit == "player" or IsSelectUnit(armed.unit) then
+				ArmButton(SelectOrSelfBlessing())
+			end
+		end)
 		addon.QueueScan()
 		C_Timer.NewTicker(1, function()
-			if enabled and (PallyCueFrame:IsShown() or DB.tankAggro) then
+			if enabled then
 				addon.Scan()
 			end
 		end)
@@ -1457,7 +1666,14 @@ function addon:PLAYER_REGEN_DISABLED()
 end
 
 function addon:UNIT_AURA(unit)
-	if unit and (unit == "player" or unit:find("^party") or unit:find("^raid") or unit:find("pet")) then
+	if not unit then
+		return
+	end
+	if unit == "player" or unit:find("^party") or unit:find("^raid") or unit:find("pet") then
+		addon.QueueScan()
+		return
+	end
+	if DB and DB.watchOutsiders and (unit == "target" or unit == "focus" or unit == "mouseover") then
 		addon.QueueScan()
 	end
 end
@@ -1481,7 +1697,25 @@ function addon:PLAYER_ROLES_ASSIGNED()
 end
 
 function addon:UNIT_TARGET()
-	if DB and DB.tankAggro then
+	if DB and (DB.tankAggro or DB.watchOutsiders) then
+		addon.QueueScan()
+	end
+end
+
+function addon:PLAYER_TARGET_CHANGED()
+	if DB and DB.watchOutsiders then
+		addon.QueueScan()
+	end
+end
+
+function addon:UPDATE_MOUSEOVER_UNIT()
+	if DB and DB.watchOutsiders then
+		addon.QueueScan()
+	end
+end
+
+function addon:PLAYER_FOCUS_CHANGED()
+	if DB and DB.watchOutsiders then
 		addon.QueueScan()
 	end
 end
@@ -1498,6 +1732,13 @@ SlashCmdList.PALLYCUE = function(msg)
 	msg = (msg or ""):gsub("^%s+", ""):gsub("%s+$", ""):lower()
 	if msg == "scan" then
 		addon.Scan()
+	elseif msg == "status" then
+		print("PallyCue enabled=", tostring(enabled),
+			"watchOutsiders=", DB and tostring(DB.watchOutsiders),
+			"armed=", armed.spell, "on", armed.unit,
+			"macro=", armed.macro,
+			"btnShown=", PallyCueRebuff and PallyCueRebuff:IsShown(),
+			"attr=", PallyCueRebuff and PallyCueRebuff:GetAttribute("macrotext"))
 	elseif msg == "reset" then
 		DB.point, DB.relPoint, DB.x, DB.y = "CENTER", "CENTER", 180, -40
 		addon.ApplyPosition()
