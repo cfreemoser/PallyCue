@@ -1,0 +1,128 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.blizzard.com/wow/ui/
+..\FrameXML\UI.xsd">
+
+	<Frame name="PallyCueFrame" parent="UIParent" frameStrata="MEDIUM" enableMouse="true" movable="true" hidden="true">
+		<Size x="280" y="72"/>
+		<Anchors>
+			<Anchor point="CENTER" x="180" y="-40"/>
+		</Anchors>
+		<Scripts>
+			<OnLoad>
+				self:RegisterForDrag("LeftButton")
+				self:SetClampedToScreen(true)
+			</OnLoad>
+			<OnDragStart>
+				PallyCue.OnDragStart(self)
+			</OnDragStart>
+			<OnDragStop>
+				PallyCue.OnDragStop(self)
+			</OnDragStop>
+		</Scripts>
+
+		<Frames>
+			<Button name="PallyCueRebuff" inherits="SecureActionButtonTemplate" parent="PallyCueFrame" enableMouse="true">
+				<Size x="72" y="72"/>
+				<Anchors>
+					<Anchor point="TOPLEFT"/>
+				</Anchors>
+				<Layers>
+					<Layer level="BACKGROUND">
+						<Texture name="$parentBg" setAllPoints="true">
+							<Color r="0" g="0" b="0" a="0.75"/>
+						</Texture>
+					</Layer>
+					<Layer level="ARTWORK">
+						<Texture name="$parentIcon">
+							<Size x="60" y="60"/>
+							<Anchors>
+								<Anchor point="CENTER"/>
+							</Anchors>
+						</Texture>
+					</Layer>
+					<Layer level="OVERLAY">
+						<Texture name="$parentBorder" file="Interface\Buttons\UI-ActionButton-Border" alphaMode="ADD">
+							<Size x="80" y="80"/>
+							<Anchors>
+								<Anchor point="CENTER"/>
+							</Anchors>
+						</Texture>
+						<FontString name="$parentCount" inherits="GameFontNormal" justifyH="RIGHT">
+							<Anchors>
+								<Anchor point="BOTTOMRIGHT" x="-6" y="6"/>
+							</Anchors>
+						</FontString>
+					</Layer>
+				</Layers>
+				<HighlightTexture file="Interface\Buttons\ButtonHilight-Square" alphaMode="ADD"/>
+				<Scripts>
+					<OnLoad>
+						self:RegisterForClicks("AnyUp", "AnyDown")
+						self:SetAttribute("type", "spell")
+					</OnLoad>
+				</Scripts>
+			</Button>
+		</Frames>
+
+		<Layers>
+			<Layer level="ARTWORK">
+				<FontString name="PallyCueLabel" inherits="GameFontNormalLarge" justifyH="LEFT" justifyV="TOP">
+					<Size x="196" y="40"/>
+					<Anchors>
+						<Anchor point="TOPLEFT" relativeTo="PallyCueRebuff" relativePoint="TOPRIGHT" x="8" y="-8"/>
+					</Anchors>
+				</FontString>
+				<FontString name="PallyCueTimer" inherits="GameFontHighlight" justifyH="LEFT">
+					<Size x="196" y="20"/>
+					<Anchors>
+						<Anchor point="TOPLEFT" relativeTo="PallyCueLabel" relativePoint="BOTTOMLEFT" x="0" y="-2"/>
+					</Anchors>
+				</FontString>
+			</Layer>
+		</Layers>
+	</Frame>
+
+	<Button name="PallyCuePip" parent="UIParent" frameStrata="MEDIUM" hidden="true" enableMouse="true" movable="true">
+		<Size x="20" y="20"/>
+		<Anchors>
+			<Anchor point="CENTER" x="180" y="-40"/>
+		</Anchors>
+		<Layers>
+			<Layer level="BACKGROUND">
+				<Texture setAllPoints="true">
+					<Color r="0.05" g="0.45" b="0.1" a="0.9"/>
+				</Texture>
+			</Layer>
+		</Layers>
+		<Scripts>
+			<OnLoad>
+				self:RegisterForDrag("LeftButton")
+				self:SetClampedToScreen(true)
+			</OnLoad>
+			<OnClick>
+				PallyCue.ToggleSetup()
+			</OnClick>
+			<OnDragStart>
+				if PallyCueDB and not PallyCueDB.locked then
+					self:StartMoving()
+				end
+			</OnDragStart>
+			<OnDragStop>
+				self:StopMovingOrSizing()
+				PallyCue.SavePipPosition()
+			</OnDragStop>
+		</Scripts>
+	</Button>
+
+	<Frame name="PallyCueSetup" parent="UIParent" frameStrata="DIALOG" enableMouse="true" movable="true" hidden="true">
+		<Size x="360" y="380"/>
+		<Anchors>
+			<Anchor point="CENTER"/>
+		</Anchors>
+		<Scripts>
+			<OnLoad>
+				tinsert(UISpecialFrames, "PallyCueSetup")
+				self:SetClampedToScreen(true)
+			</OnLoad>
+		</Scripts>
+	</Frame>
+</Ui>
