@@ -1125,9 +1125,19 @@ local function MakeHeader(parent, text)
 	setupCursorY = setupCursorY - 4
 end
 
+local function PaintFocus(btn, on)
+	if not btn then
+		return
+	end
+	Paint(btn.bg, on and ROW_HOVER or ROW_IDLE)
+	btn.accent:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], on and 0.95 or 0.0)
+end
+
 -- col: 0 full width, 1 left, 2 right (same row as previous left)
-local function MakeRow(parent, index, kind, key, title, col)
+-- role: "tail" is the right-hand landing pad for a full-width control
+local function MakeRow(parent, index, kind, key, title, col, role)
 	col = col or 0
+	role = role or "full"
 	local width, x
 	if col == 0 then
 		width, x = PANEL_W - 32, 16
@@ -1167,17 +1177,17 @@ local function MakeRow(parent, index, kind, key, title, col)
 	btn.value:SetPoint("RIGHT", -10, 0)
 	btn.value:SetJustifyH("RIGHT")
 
-	btn.kind, btn.key, btn.title = kind, key, title
+	btn.kind, btn.key, btn.title, btn.role = kind, key, title, role
 	btn.OnCancelClick = function()
 		parent:Hide()
 	end
 	btn:SetScript("OnEnter", function(self)
-		Paint(self.bg, ROW_HOVER)
-		self.accent:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.95)
+		PaintFocus(self, true)
+		PaintFocus(self.pair, true)
 	end)
 	btn:SetScript("OnLeave", function(self)
-		Paint(self.bg, ROW_IDLE)
-		self.accent:SetColorTexture(GOLD[1], GOLD[2], GOLD[3], 0.0)
+		PaintFocus(self, false)
+		PaintFocus(self.pair, false)
 	end)
 	btn:SetScript("OnClick", function()
 		if kind == "cycle" then
@@ -1197,12 +1207,30 @@ local function MakeRow(parent, index, kind, key, title, col)
 		end
 	end)
 
+	if role == "tail" then
+		btn.icon:Hide()
+		btn.label:SetText("")
+		btn.label:SetPoint("LEFT", 8, 0)
+	end
+
 	if col ~= 1 then
 		setupCursorY = setupCursorY - ROW_H - ROW_GAP
 	end
-	setupControls[key or ("row" .. index)] = btn
+	if role ~= "tail" then
+		setupControls[key or ("row" .. index)] = btn
+	end
 	setupButtons[#setupButtons + 1] = btn
 	return btn
+end
+
+-- Full-width control split into two column-aligned nodes so ConsolePort
+-- D-pad down from either options column can land on it (center-based nav
+-- treats a single wide row as sideways from a half-width button).
+local function MakeSpanRow(parent, leadIndex, tailIndex, kind, key, title)
+	local lead = MakeRow(parent, leadIndex, kind, key, title, 1, "lead")
+	local tail = MakeRow(parent, tailIndex, kind, key, title, 2, "tail")
+	lead.pair, tail.pair = tail, lead
+	return lead, tail
 end
 
 function addon.SetupConsolePort()
@@ -1332,12 +1360,12 @@ function addon.BuildSetup()
 	MakeRow(f, 7, "toggle", "sound", "Sound", 2)
 	MakeRow(f, 8, "toggle", "watchPets", "Watch pets", 1)
 	MakeRow(f, 9, "toggle", "centerText", "Center text", 2)
-	MakeRow(f, 13, "toggle", "tankAggro", "Tank aggro", 0)
+	MakeSpanRow(f, 13, 14, "toggle", "tankAggro", "Tank aggro")
 
 	MakeHeader(f, "HUD")
 	MakeRow(f, 10, "toggle", "combatOnly", "Only in combat", 1)
 	MakeRow(f, 11, "toggle", "locked", "Lock frame", 2)
-	MakeRow(f, 12, "reset", "reset", "Reset HUD", 0)
+	MakeSpanRow(f, 12, 15, "reset", "reset", "Reset HUD")
 
 	setupCursorY = setupCursorY - 6
 	local hint = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
@@ -1354,25 +1382,30 @@ function addon.RefreshSetup()
 		return
 	end
 	for _, btn in ipairs(setupButtons) do
+		local tail = btn.role == "tail"
+		local lead = btn.role == "lead"
 		if btn.kind == "cycle" then
-			btn.label:SetText(btn.title)
-			btn.value:SetText(blessingNames[DB[btn.key]] or "?")
+			btn.label:SetText(tail and "" or btn.title)
+			btn.value:SetText((tail or not lead) and (blessingNames[DB[btn.key]] or "?") or "")
 			btn.value:SetTextColor(unpack(GOLD))
 			btn.icon:SetTexture(blessingIcons[DB[btn.key]] or "Interface\\Icons\\INV_Misc_QuestionMark")
 		elseif btn.kind == "toggle" then
 			local on = DB[btn.key]
-			btn.label:SetText(btn.title)
-			btn.value:SetText(on and "ON" or "OFF")
+			btn.label:SetText(tail and "" or btn.title)
+			btn.value:SetText((tail or not lead) and (on and "ON" or "OFF") or "")
 			btn.value:SetTextColor(unpack(on and ONCOL or OFFCOL))
 			btn.icon:SetTexture(TOGGLE_ICONS[btn.key] or "Interface\\Icons\\INV_Misc_QuestionMark")
 		elseif btn.kind == "reset" then
-			btn.label:SetText("Reset HUD")
+			btn.label:SetText(tail and "" or "Reset HUD")
 			btn.value:SetText("")
 			btn.icon:SetTexture(TOGGLE_ICONS.reset)
 		elseif btn.kind == "close" then
 			btn.label:SetText("Close")
 			btn.value:SetText("")
 			btn.icon:SetTexture(TOGGLE_ICONS.close)
+		end
+		if tail then
+			btn.icon:Hide()
 		end
 	end
 end
