@@ -55,6 +55,7 @@ local COLORS = {
 	range = {0.30, 0.55, 1.0},
 	dead = {0.55, 0.55, 0.55},
 	wait = {1.0, 0.55, 0.15},
+	aggro = {1.0, 0.38, 0.08},
 	ok = {0.10, 0.75, 0.20},
 }
 
@@ -134,10 +135,6 @@ local function SelfWarn()
 		return 5
 	end
 	return n
-end
-
-local function PallyPowerActive()
-	return _G.PallyPower and _G.PallyPower.opt and _G.PallyPower.opt.enable
 end
 
 local function InRange(spell, unit)
@@ -778,7 +775,8 @@ local function AggroAlert(entry)
 	if GetTime() - zoneAt < ZONE_SUPPRESS then
 		return
 	end
-	local key = "aggro:" .. (entry.name or entry.unit)
+	local name = entry.name or entry.plainName
+	local key = "aggro:" .. (name or entry.unit)
 	local now = GetTime()
 	if lastAlert[key] and now - lastAlert[key] < ALERT_COOLDOWN then
 		return
@@ -792,7 +790,7 @@ local function AggroAlert(entry)
 		PlaySound(SOUNDKIT and SOUNDKIT.RAID_WARNING or 8959)
 	end
 	if DB.centerText then
-		local text = string.format("%s%s|r has aggro", ClassColor(entry.class), entry.name)
+		local text = string.format("%s%s|r has aggro", ClassColor(entry.class), name)
 		if RaidNotice_AddMessage and RaidWarningFrame then
 			RaidNotice_AddMessage(RaidWarningFrame, text, ChatTypeInfo["RAID_WARNING"])
 		else
@@ -811,8 +809,8 @@ local function ConsiderHostile(unit, hostiles)
 	hostiles[UnitGUID(unit) or unit] = unit
 end
 
-function addon.ScanHostileAggro()
-	if not DB.tankAggro then
+function addon.FindHostileAggro()
+	if not DB or not DB.tankAggro then
 		return
 	end
 	local grouped = IsInGroup and IsInGroup() or (GetNumGroupMembers() > 0)
@@ -864,8 +862,39 @@ function addon.ScanHostileAggro()
 		end
 	end
 
+	return seen
+end
+
+function addon.AppendAggroProblems(problems)
+	local seen = addon.FindHostileAggro()
+	if not seen then
+		return
+	end
+	local added = false
 	for _, entry in pairs(seen) do
-		AggroAlert(entry)
+		problems[#problems + 1] = {
+			priority = 0,
+			kind = "aggro",
+			unit = entry.unit,
+			icon = "Interface\\Icons\\Ability_Warrior_DefensiveStance",
+			label = string.format("%s%s|r has aggro", ClassColor(entry.class), entry.name),
+			plainName = entry.name,
+			state = "aggro",
+			count = 1,
+			class = entry.class,
+		}
+		added = true
+	end
+	if added then
+		table.sort(problems, function(a, b)
+			if a.priority ~= b.priority then
+				return a.priority < b.priority
+			end
+			if a.state ~= b.state then
+				return a.state == "missing"
+			end
+			return (a.remain or 0) < (b.remain or 0)
+		end)
 	end
 end
 
@@ -873,7 +902,7 @@ local function Alert(problem)
 	if GetTime() - zoneAt < ZONE_SUPPRESS then
 		return
 	end
-	if DB.combatOnly and not InFight() then
+	if not InFight() then
 		return
 	end
 	if problem.state ~= "missing" then
@@ -1046,7 +1075,7 @@ local function UpdateList(problems)
 	EnsureRows()
 	local shown = 0
 	for _, p in ipairs(problems) do
-		if p.kind == "blessing" or p.kind == "rf" or p.kind == "aura" or p.kind == "seal" then
+		if p.kind == "blessing" or p.kind == "rf" or p.kind == "aura" or p.kind == "seal" or p.kind == "aggro" then
 			shown = shown + 1
 			if shown <= MAX_ROWS then
 				local row = listRows[shown]
@@ -1068,7 +1097,7 @@ local function UpdateList(problems)
 	end
 	local total = 0
 	for _, p in ipairs(problems) do
-		if p.kind == "blessing" or p.kind == "rf" or p.kind == "aura" or p.kind == "seal" then
+		if p.kind == "blessing" or p.kind == "rf" or p.kind == "aura" or p.kind == "seal" or p.kind == "aggro" then
 			total = total + 1
 		end
 	end
@@ -1088,7 +1117,6 @@ local function UpdateList(problems)
 end
 
 function addon.UpdateHUD(problems)
-	local hideForPP = PallyPowerActive()
 	local hudAction
 	for _, p in ipairs(problems) do
 		if p.kind ~= "blessing" or p.state == "missing" or p.state == "expiring" then
@@ -1108,6 +1136,26 @@ function addon.UpdateHUD(problems)
 			end
 		end
 	end
+	if not hudAction then
+		for _, p in ipairs(problems) do
+			if p.kind == "aggro" then
+				hudAction = p
+				break
+			end
+		end
+	end
+
+	local fighting = InFight()
+	if not fighting then
+		local missing = {}
+		for _, p in ipairs(problems) do
+			if (p.kind == "blessing" or p.kind == "greater") and p.state == "missing" then
+				missing[#missing + 1] = p
+			end
+		end
+		problems = missing
+		hudAction = missing[1]
+	end
 
 	local castAction
 	for _, p in ipairs(problems) do
@@ -1121,14 +1169,14 @@ function addon.UpdateHUD(problems)
 
 	local healthy = #problems == 0
 
-	if not DB.showHud or hideForPP or not enabled then
+	if not enabled then
 		PlaceClicker(false)
 		PallyCueFrame:Hide()
 		PallyCuePip:Hide()
 		return
 	end
 
-	if DB.combatOnly and not InFight() then
+	if not DB.showHud then
 		PlaceClicker(false)
 		PallyCueFrame:Hide()
 		PallyCuePip:Hide()
@@ -1136,9 +1184,8 @@ function addon.UpdateHUD(problems)
 	end
 
 	if healthy then
-		PlaceClicker(false)
 		PallyCuePip:Hide()
-		if DB.hideHealthy then
+		if not fighting then
 			PallyCueFrame:Hide()
 		else
 			PallyCueFrame:Show()
@@ -1168,6 +1215,8 @@ function addon.UpdateHUD(problems)
 		PallyCueLabel:SetText(nextAction.label)
 		if nextAction.state == "range" then
 			PallyCueTimer:SetText("Out of range")
+		elseif nextAction.kind == "aggro" then
+			PallyCueTimer:SetText("Threat")
 		elseif nextAction.remain then
 			PallyCueTimer:SetText(FormatTime(nextAction.remain))
 		elseif nextAction.state == "missing" then
@@ -1175,7 +1224,9 @@ function addon.UpdateHUD(problems)
 		else
 			PallyCueTimer:SetText("")
 		end
-		Alert(nextAction)
+		if nextAction.kind ~= "aggro" then
+			Alert(nextAction)
+		end
 	end
 	UpdateList(problems)
 end
@@ -1186,8 +1237,13 @@ function addon.Scan()
 	end
 	addon.BuildRoster()
 	local problems = addon.CollectProblems()
+	addon.AppendAggroProblems(problems)
 	addon.UpdateHUD(problems)
-	addon.ScanHostileAggro()
+	for _, p in ipairs(problems) do
+		if p.kind == "aggro" then
+			AggroAlert(p)
+		end
+	end
 end
 
 function addon.QueueScan()
@@ -1740,7 +1796,7 @@ function addon:PLAYER_REGEN_ENABLED()
 end
 
 function addon:PLAYER_REGEN_DISABLED()
-	addon.QueueScan()
+	addon.Scan()
 end
 
 function addon:UNIT_AURA(unit)
