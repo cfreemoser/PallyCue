@@ -1,5 +1,7 @@
 # PallyCue
 
+<img src="icon.png" alt="PallyCue" width="160" />
+
 Minimal paladin blessing companion for **Steam Deck / ConsolePort**.
 
 Silent when everyone is buffed. Flashes when someone loses a blessing. One large **Rebuff** button (and one keybind) casts the next missing or expiring buff.
@@ -32,3 +34,7 @@ Not a PallyPower replacement for raid assignment leads.
 - **Show HUD** is off by default (macro-only). Turn it on in `/pc` if you want the on-screen button.
 
 Vanilla / TBC / Wrath Classic. Paladin only.
+
+## License
+
+[MIT](LICENSE)
