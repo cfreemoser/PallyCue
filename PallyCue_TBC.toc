@@ -2,7 +2,7 @@
 ## Title: PallyCue
 ## Notes: Steam Deck / ConsolePort paladin blessing reminder and one-button rebuff
 ## Author: freemoser
-## Version: 1.0.0
+## Version: @project-version@
 ## DefaultState: enabled
 ## OptionalDeps: LibClassicDurations, PallyPower
 ## SavedVariables: PallyCueDB
