@@ -137,6 +137,24 @@ local function InRange(spell, unit)
 	return r == 1 or r == true
 end
 
+local function HasRighteousFury(unit)
+	if not rfName or not unit then
+		return false
+	end
+	local i = 1
+	while true do
+		local name = UnitAura(unit, i, "HELPFUL")
+		if not name then
+			break
+		end
+		if name == rfName then
+			return true
+		end
+		i = i + 1
+	end
+	return false
+end
+
 local function IsTank(unit)
 	if UnitGroupRolesAssigned then
 		local role = UnitGroupRolesAssigned(unit)
@@ -144,7 +162,11 @@ local function IsTank(unit)
 			return true
 		end
 	end
-	return GetPartyAssignment and GetPartyAssignment("MAINTANK", unit)
+	if GetPartyAssignment and GetPartyAssignment("MAINTANK", unit) then
+		return true
+	end
+	-- Paladin tanks often have no formal role; Righteous Fury is the signal.
+	return HasRighteousFury(unit)
 end
 
 local function FormatTime(remain)
@@ -640,16 +662,6 @@ local function InFight()
 	return false
 end
 
-local function PlayerIsTanking()
-	if IsTank("player") then
-		return true
-	end
-	if rfName and FindAura("player", { [rfName] = true }) then
-		return true
-	end
-	return false
-end
-
 local function AggroAlert(entry)
 	if GetTime() - zoneAt < ZONE_SUPPRESS then
 		return
@@ -692,7 +704,7 @@ function addon.ScanHostileAggro()
 		return
 	end
 	local grouped = IsInGroup and IsInGroup() or (GetNumGroupMembers() > 0)
-	if not grouped or not InFight() or not PlayerIsTanking() then
+	if not grouped or not InFight() or not IsTank("player") then
 		return
 	end
 

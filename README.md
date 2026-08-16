@@ -23,7 +23,7 @@ Not a PallyPower replacement for raid assignment leads.
 
 - Melee → Blessing of Might
 - Casters → Blessing of Wisdom
-- Tanks → Blessing of Kings
+- Tanks (role, main tank, or Righteous Fury) → Blessing of Kings
 - Watches your own Righteous Fury, last-seen Aura, and last-seen Seal
 - Optional tank aggro alert (off by default): if you are tanking, warns when a non-tank group member is targeted by an enemy
 
