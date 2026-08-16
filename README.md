@@ -12,6 +12,7 @@ Not a PallyPower replacement for raid assignment leads.
    (or `_classic_era_` / `_classic_tbc_`).
 2. Restart the client and enable **PallyCue**.
 3. Bind **PallyCue → Rebuff** to a Steam Deck paddle or ConsolePort extra.
+   A bar macro also works: `/click PallyCueRebuff LeftButton 1` (do not type this in chat).
 
 ## Use
 
@@ -27,5 +28,7 @@ Not a PallyPower replacement for raid assignment leads.
 - Watches your own Righteous Fury, last-seen Aura, and last-seen Seal
 - Self-buff warning at 5s remaining (cycle 0 / 5 / 10 / 15 / 20 / 30 in setup; 0 = missing only)
 - Optional tank aggro alert (off by default): if you are tanking, warns when a non-tank group member has aggro and keeps that event on the HUD until it drops
+- **Watch target** (on by default): include a friendly target, focus, or mouseover who is not in your group. Uses a single blessing, not Greater. If nobody is selected, Rebuff applies that blessing to you. Group members who actually need a buff stay first.
+- **Show HUD** is off by default (macro-only). Turn it on in `/pc` if you want the on-screen button.
 
 Vanilla / TBC / Wrath Classic. Paladin only.
