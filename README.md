@@ -19,7 +19,7 @@ Not a PallyPower replacement for raid assignment leads.
 ## Use
 
 - Red / yellow cluster = something needs a buff. Press Rebuff (or tap the icon).
-- Type `/pc` for setup. When **Hide if healthy** is on, the HUD disappears completely while buffs are up.
+- Type `/pc` for setup. When **Hide if healthy** is on, the HUD disappears completely while buffs are up (in and out of combat). Rebuff still works from the keybind or `/click` macro.
 - `/pallycue` or `/pc` opens setup. `/pc reset` recenters the frame.
 
 ## Defaults
