@@ -1185,8 +1185,12 @@ function addon.UpdateHUD(problems)
 
 	if healthy then
 		PallyCuePip:Hide()
-		if not fighting then
-			PallyCueFrame:Hide()
+		if DB.hideHealthy then
+			-- Park the secure clicker so keybind / /click still work while the HUD is gone.
+			PlaceClicker(false)
+			if not InCombatLockdown() then
+				PallyCueFrame:Hide()
+			end
 		else
 			PallyCueFrame:Show()
 			PlaceClicker(true)
